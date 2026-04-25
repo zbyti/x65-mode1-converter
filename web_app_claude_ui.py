@@ -859,6 +859,66 @@ def generate_gallery_html(sid, thumbs):
     .hero-bar {{ padding: 20px; }}
     .grid-wrapper {{ margin: 20px; }}
   }}
+
+  /* ── Lightbox ── */
+  .lb-overlay {{
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.88);
+    z-index: 3000;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 16px;
+    cursor: zoom-out;
+  }}
+  .lb-overlay.active {{ display: flex; }}
+
+  .lb-frame {{
+    position: relative;
+    border: 1px solid var(--phosphor-dim);
+    box-shadow: 0 0 0 1px rgba(57,255,106,0.08), 0 0 60px rgba(57,255,106,0.15);
+    line-height: 0;
+    animation: lbIn 0.18s ease both;
+  }}
+  @keyframes lbIn {{
+    from {{ opacity: 0; transform: scale(0.94); }}
+    to   {{ opacity: 1; transform: scale(1); }}
+  }}
+
+  .lb-frame img {{
+    display: block;
+    width: 768px;
+    height: 480px;
+    image-rendering: pixelated;
+    max-width: 95vw;
+    max-height: 80vh;
+  }}
+
+  .lb-bar {{
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    font-size: 13px;
+    color: var(--text-dim);
+    letter-spacing: 0.06em;
+  }}
+
+  .lb-seed {{
+    font-family: var(--font-display);
+    font-size: 14px;
+    color: var(--phosphor);
+    font-weight: 700;
+  }}
+
+  .lb-hint {{
+    font-size: 11px;
+    color: var(--text-dim);
+    opacity: 0.6;
+  }}
+
+  .card-img-wrap {{ cursor: zoom-in; }}
 </style>
 </head>
 <body>
@@ -918,6 +978,17 @@ def generate_gallery_html(sid, thumbs):
       <div class="progress-track">
         <div class="progress-fill" id="progressFill"></div>
       </div>
+    </div>
+  </div>
+
+  <!-- Lightbox -->
+  <div class="lb-overlay" id="lbOverlay">
+    <div class="lb-frame">
+      <img id="lbImg" src="" alt="preview">
+    </div>
+    <div class="lb-bar">
+      <span class="lb-seed" id="lbSeed"></span>
+      <span class="lb-hint">768 &times; 480 &nbsp;&middot;&nbsp; click or ESC to close</span>
     </div>
   </div>
 
@@ -987,6 +1058,26 @@ def generate_gallery_html(sid, thumbs):
     }}
 
     regenBtn.closest('form').addEventListener('submit', () => showProcessing());
+
+    // ── Lightbox ──────────────────────────────────────────────
+    const lb       = document.getElementById('lbOverlay');
+    const lbImg    = document.getElementById('lbImg');
+    const lbSeedEl = document.getElementById('lbSeed');
+
+    document.querySelectorAll('.card-img-wrap').forEach(wrap => {{
+      wrap.addEventListener('click', () => {{
+        const img  = wrap.querySelector('img');
+        const seed = wrap.closest('.card').querySelector('.seed-val').textContent;
+        lbImg.src = img.src;
+        lbSeedEl.textContent = 'SEED ' + seed;
+        lb.classList.add('active');
+      }});
+    }});
+
+    lb.addEventListener('click', () => lb.classList.remove('active'));
+    document.addEventListener('keydown', e => {{
+      if (e.key === 'Escape') lb.classList.remove('active');
+    }});
   </script>
 </body>
 </html>'''
