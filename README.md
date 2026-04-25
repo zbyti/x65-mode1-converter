@@ -212,24 +212,24 @@ The display list must contain 240 identical lines of MODE1.
 
 1. First, a **LOAD MEMORY** instruction to set the LMS (memory scan) pointer:
    ```
-   CGIA_DL_INS_LOAD_MEMORY | CGIA_DL_INS_LM_MEMORY_SCAN   ; $03 | $10 = $13
+   DL_INS_LOAD_MEMORY | DL_INS_LM_MEMORY_SCAN   ; $03 | $10 = $13
    ; followed by 2 bytes: LOW, HIGH offset of the bitmap inside the bank
    ; e.g. $00, $00 → LMS = $01:0000
    ```
 2. Then, 240 MODE1 mode-row instructions:
    ```
-   CGIA_DL_MODE_PALETTE_BITMAP   ; $09
+   DL_MODE_PALETTE_BITMAP   ; $09
    ; add flags if needed:
-   ; | CGIA_DL_DOUBLE_WIDTH_BIT  ; $10
-   ; | CGIA_DL_MULTICOLOR_BIT    ; $20
+   ; | DL_DOUBLE_WIDTH_BIT  ; $10
+   ; | DL_MULTICOLOR_BIT    ; $20
    ```
 
 **Example display list (assembler syntax)** for a plain 4 bpp image at `$01:0000`:
 
 ```asm
-    .byte $13, $00, $00          ; Load Memory Scan pointer = $0000
-    .byte $09                    ; MODE1 row
-    ; ...repeat $09 240 times total...
+    .byte DL_INS_LOAD_MEMORY | DL_INS_LM_MEMORY_SCAN, $00, $00   ; Load Memory Scan pointer = $0000
+    .byte DL_MODE_PALETTE_BITMAP                                  ; MODE1 row
+    ; ...repeat DL_MODE_PALETTE_BITMAP 240 times total...
 ```
 
 If your assembler supports repeat macros, use one. Otherwise, you can write a small loop or simply emit 240 `$09` bytes.
@@ -315,7 +315,7 @@ When `--double-width` is specified, the converter pre-scales the input image hor
 
 - Every logical pixel is displayed twice.
 - The bitmap data still has the size of a 192-pixel-wide line (e.g. for 4 bpp: 96 bytes per line instead of 192).
-- **Important**: If you use `--double-width`, you must also set the `DOUBLE_WIDTH` flag in the CGIA plane flags **and** in every MODE1 display-list instruction (bit 4 = `$10`), otherwise the image will look squashed.
+- **Important**: If you use `--double-width`, you must also set the `DOUBLE_WIDTH` flag in the CGIA plane flags (`PLANE_MASK_DOUBLE_WIDTH` = `$10`) **and** in every MODE1 display-list instruction (`DL_DOUBLE_WIDTH_BIT` = `$10`), otherwise the image will look squashed.
 
 ---
 
