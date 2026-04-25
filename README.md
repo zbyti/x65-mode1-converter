@@ -77,7 +77,7 @@ pip install numpy pillow
 
 ## Installation
 
-Just download `mode1_converter.py` and `web_app_*_ui.py` and place them in any directory.
+Just download `mode1_converter.py` and `web_app_claude_ui.py` and place them in any directory.
 You also need a **global palette file** (see [Global Palette Note](#global-palette-note)).
 The converter auto-detects common file names:
 
@@ -118,7 +118,7 @@ Instead of guessing the best `--seed` manually, you can use the built-in web app
 
 1. Start the server:
    ```bash
-   python web_app_*_ui.py
+   python web_app_claude_ui.py
    ```
    Your browser will open automatically at `http://127.0.0.1:8000`.
 
@@ -128,7 +128,7 @@ Instead of guessing the best `--seed` manually, you can use the built-in web app
 
 4. To try another batch of seeds for the same image, click the **"New simulations"** button – the original image is reused and 12 new seeds are generated.
 
-**Configuration** (edit the top of `web_app_*_ui.py` if needed):
+**Configuration** (edit the top of `web_app_claude_ui.py` if needed):
 - `NUM_SAMPLES` – number of gallery entries (default: 12)
 - `DEFAULT_BPP` – bits per pixel (default: 4, can be 1–4)
 - `SEED_MIN` / `SEED_MAX` – random seed range (default: 0–512)
@@ -332,6 +332,184 @@ If you place a file named `x65_palette.json` in the same folder as the converter
 
 ---
 
+## Example code (Millfork)
+
+```c
+//-----------------------------------------------------------------------------
+// MODE1 4bpp demo picture for X65 https://x65.zone/
+//
+// Displays a full-screen 384×240 paletted bitmap using CGIA MODE1.
+// Each pixel is 4 bits, packing 2 pixels per byte, giving 16 effective
+// colours (8 palette registers × half-bright flag).
+//
+// The display list follows the ANTIC-style approach: one mode-row
+// instruction per raster line, generated at compile time by a `for` loop.
+//-----------------------------------------------------------------------------
+
+// Screen layout constants
+const word BITMAP_ADDR = $2000            // where the bitmap lives in RAM
+const byte BYTES_PER_LINE = 192           // 384 pixels / 2 pixels per byte (4bpp)
+const byte ROWS = 240                     // visible raster lines
+
+// Load the packed 4bpp image file (46080 bytes)
+array BITMAP @ BITMAP_ADDR = file("data/image.4bpp", 0)
+
+//-----------------------------------------------------------------------------
+// Global zero‑page variables
+//-----------------------------------------------------------------------------
+
+volatile int24 vblclock @ $0              // 24‑bit frame counter, incremented each VBL
+
+byte b                  @ $3              // scratch byte
+word w                  @ $4              // scratch word
+pointer p               @ $6              // scratch pointer
+
+//-----------------------------------------------------------------------------
+// Display List
+//-----------------------------------------------------------------------------
+// The CGIA is a fetch master — once configured, it reads the display list
+// from memory every frame and drives the raster output without CPU help.
+//
+// This list:
+//   1. LOAD_MEMORY sets the LMS (Memory Scan) pointer to the bitmap.
+//   2. 240 × MODE1 instructions each draw a single raster line from the
+//      current LMS address, then advance LMS by `stride` bytes.
+//   3. JUMP + DLI loops the display list back to the start after each
+//      vertical blank, so the same picture is redrawn every frame.
+//-----------------------------------------------------------------------------
+
+array(byte) dl align(fast) = [
+    DL_INS_LOAD_MEMORY | DL_INS_LM_MEMORY_SCAN,         // load LMS pointer
+    @word[BITMAP_ADDR],                                 // 16‑bit address of bitmap
+    for x, 1, until, ROWS [ DL_MODE_PALETTE_BITMAP ],   // one MODE1 row per raster line
+    DL_INS_JUMP | DL_INS_DL_INTERRUPT, @word[dl.addr]   // jump to DL start at VBL
+]
+
+//-----------------------------------------------------------------------------
+// System initialisation
+//-----------------------------------------------------------------------------
+// Sets up the 65C816 CPU state, configures CGIA plane 0 for 4bpp bitmap
+// mode, loads the palette, and enables vertical‑blank NMI interrupts so
+// the `vblclock` counter runs.
+//-----------------------------------------------------------------------------
+
+macro void x65_init() {
+    // --- CPU housekeeping ---
+    asm {
+        sei         ; disable maskable IRQs during setup
+        cld         ; ensure binary arithmetic (not BCD)
+
+        ldx #$ff
+        txs         ; initialise stack pointer to $01FF
+    }
+
+    // --- Disable all planes while we configure ---
+    cgia.planes = 0
+
+    // --- Clear all 16 plane‑0 registers to known state ---
+    p = cgia.plane0.addr
+    for b, 9, downto, 0 { p[b] = 0 }
+
+    // --- Configure plane 0 as 4bpp paletted bitmap ---
+    cgia.plane0.bckgnd.flags      = PLANE_BITS_4BPP     // 4 bits per pixel + half‑bright
+    cgia.plane0.bckgnd.row_height = 0                   // each DL mode row = 1 raster line
+
+    // --- Palette (8 base colours; upper 8 are half‑bright variants) ---
+    // The CGIA uses a 256‑colour palette organised as 32 hues,
+    // each with 8 brightness steps (0 = darkest, 7 = brightest).
+    // In 4 bpp mode the low 3 bits of a pixel select one of these
+    // 8 registers; the high bit (half‑bright) flips to the opposite
+    // brightness half of the same hue row, giving 16 effective colours.
+    //
+    // Register        Index   Palette entry    RGB approximation
+    // ----------------------------------------------------------
+    cgia.plane0.bckgnd.shared_color0 = 4    // hue  0, luma 4  →  mid grey      (146,146,146)
+    cgia.plane0.bckgnd.shared_color1 = 23   // hue  2, luma 7  →  light orange  (250,211,187)
+    cgia.plane0.bckgnd.color2 = 2           // hue  0, luma 2  →  dark grey     ( 73, 73, 73)
+    cgia.plane0.bckgnd.color3 = 3           // hue  0, luma 3  →  grey          (109,109,109)
+    cgia.plane0.bckgnd.color4 = 1           // hue  0, luma 1  →  almost black  ( 36, 36, 36)
+    cgia.plane0.bckgnd.color5 = 1           // hue  0, luma 1  →  (duplicate)
+    cgia.plane0.bckgnd.color6 = 0           // hue  0, luma 0  →  pure black    (  0,  0,  0)
+    cgia.plane0.bckgnd.color7 = 0           // hue  0, luma 0  →  (duplicate)
+    //
+    // Half‑bright pairs for the above:
+    //   index 4 ↔ index 196  (dark half of grey row)
+    //   index 23 ↔ index 215 (dark half of orange row)
+    //   index 2 ↔ index 194  (bright half of grey row)
+    //   etc.
+
+    // --- Point plane 0 to the display list ---
+    cgia.offset0 = dl.addr
+
+    // --- Activate plane 0 as a background graphics plane (type = 0) ---
+    cgia.planes = 1
+
+    // --- Enable vertical‑blank NMI and reset frame counter ---
+    vblclock = 0
+    cgia.int_enable = %10000000              // VBI flag set → NMI at each VBL
+}
+
+//-----------------------------------------------------------------------------
+// Vertical Blank Interrupt (NMI)
+//-----------------------------------------------------------------------------
+// Fires once per frame (60 Hz on NTSC‑like timing). Increments a 24‑bit
+// software clock that can be used by the main loop for synchronising
+// animations, delays, or timed events.
+//-----------------------------------------------------------------------------
+
+interrupt asm void vbl() {
+.vblclock:  inc vblclock.b2     ; increment low byte
+            bne .tickend        ; if it wrapped to zero…
+            inc vblclock.b1     ;   carry into middle byte
+            bne .tickend
+            inc vblclock.b0     ;   carry into high byte
+.tickend:
+            stz cgia.int_status ; acknowledge the interrupt (write‑1‑to‑clear)
+            rti
+}
+
+//-----------------------------------------------------------------------------
+// Frame‑accurate delay helpers
+//-----------------------------------------------------------------------------
+// `pause()` waits exactly one frame (the VBL clock must advance).
+// `wait(f)` waits `f` frames (0–255) and returns.
+// Useful for simple synchronisation without a dedicated timer.
+//-----------------------------------------------------------------------------
+
+asm void pause() {
+            lda vblclock.b2     ; remember low byte of frame counter
+.rt_check:  cmp vblclock.b2     ; spin until it changes (next VBL)
+            beq .rt_check
+            rts
+}
+
+noinline asm void wait(byte register(a) f) {
+            clc
+            adc vblclock.b2     ; target = current low byte + f
+.rt_check:  cmp vblclock.b2     ; spin until low byte matches target
+            bne .rt_check
+            rts
+}
+
+//-----------------------------------------------------------------------------
+// Main program
+//-----------------------------------------------------------------------------
+// The CGIA runs autonomously from the display list; the CPU is free.
+// The infinite loop here does nothing, but real programs would place
+// game logic or animation updates inside it.
+//-----------------------------------------------------------------------------
+
+void main() {
+    x65_init()
+
+    while true {
+        // wait(20) would pause here for 20 frames, etc.
+    }
+}
+```
+
+---
+
 ## Tips for Better Color Reproduction
 
 The k-means algorithm that selects the shared colors depends on a **random seed**. If you don't provide one, the converter picks a random starting point every time, leading to slight variations in the final palette. Sometimes the result may look **washed out** or lack contrast.
@@ -339,7 +517,7 @@ The k-means algorithm that selects the shared colors depends on a **random seed*
 - **Use `--seed` for repeatable results** – pick any integer (e.g., `--seed 42`). The conversion will always produce the same bitmap and palette.
 - **If colors appear too dull, try different seeds** – values like `123`, `777`, `2024` etc. can steer the clustering towards a more vibrant set of colors. Run the converter a few times with different seeds and choose the simulation you like best.
 - The seed only affects modes that use k-means (≥2 bpp). 1-bpp mode uses a simple threshold and is not influenced by the seed.
-- Use the **web gallery** (`web_app_*_ui.py`) to visually compare 12 seeds at once and pick the best one without manual re-runs.
+- Use the **web gallery** (`web_app_claude_ui.py`) to visually compare 12 seeds at once and pick the best one without manual re-runs.
 
 ---
 
