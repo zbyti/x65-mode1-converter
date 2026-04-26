@@ -17,11 +17,21 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from PIL import Image
 import numpy as np
-from mode1_converter import Mode1Converter, load_global_palette
+from mode1_converter_v2 import (
+    Mode1Converter, load_global_palette,
+    KMeansStrategy, FloydSteinbergStrategy, BayerDitherStrategy, HueFirstStrategy,
+)
 
 # ─────────────── configuration ───────────────
-NUM_SAMPLES = 12
+NUM_SAMPLES = 4                # simulations per algorithm
 DEFAULT_BPP = 4                # 4 bpp – 8 colors + half‑bright
+
+ALGORITHMS = [
+    ('K-Means',        KMeansStrategy),
+    ('Floyd-Steinberg', FloydSteinbergStrategy),
+    ('Bayer Dither',   BayerDitherStrategy),
+    ('Hue-First',      HueFirstStrategy),
+]
 PALETTE_PATH = 'x65_palette.json'
 PORT = 8000
 SEED_MIN = 0
@@ -377,7 +387,7 @@ HTML_INDEX = '''<!DOCTYPE html>
     <div class="logo-block">
       <div class="logo-line">Amstrad CPC &mdash; Graphics Simulation Engine</div>
       <h1>MODE1</h1>
-      <p class="subtitle">Upload an image &mdash; crop it &mdash; get ''' + str(NUM_SAMPLES) + ''' dithered simulations</p>
+      <p class="subtitle">Upload an image &mdash; crop it &mdash; get ''' + str(NUM_SAMPLES * len(ALGORITHMS)) + ''' dithered simulations across 4 algorithms</p>
     </div>
 
     <div class="panel">
@@ -421,14 +431,25 @@ HTML_INDEX = '''<!DOCTYPE html>
 
 
 def generate_gallery_html(sid, thumbs):
-    items = ''
-    for i, t in enumerate(thumbs):
-        items += f'''
-        <div class="card" style="animation-delay:{i*0.05:.2f}s">
+    # thumbs is a flat list of dicts: {seed, data_url, algo_name, algo_index, col_index, global_index}
+    # Group by algo_name preserving order
+    from collections import OrderedDict
+    rows_by_algo = OrderedDict()
+    for t in thumbs:
+        key = t['algo_name']
+        rows_by_algo.setdefault(key, []).append(t)
+
+    sections_html = ''
+    for algo_name, row_thumbs in rows_by_algo.items():
+        cards_html = ''
+        for t in row_thumbs:
+            i = t['global_index']
+            cards_html += f'''
+        <div class="card" style="animation-delay:{i*0.04:.2f}s">
           <div class="card-img-wrap">
             <img src="{t['data_url']}" alt="seed={t['seed']}">
             <div class="card-overlay">
-              <span class="card-index">#{i+1:02d}</span>
+              <span class="card-index">SEED {t['seed']}</span>
             </div>
           </div>
           <div class="card-footer">
@@ -443,6 +464,18 @@ def generate_gallery_html(sid, thumbs):
           </div>
         </div>'''
 
+        sections_html += f'''
+  <div class="algo-section">
+    <div class="algo-header">
+      <span class="algo-tag">{algo_name.upper()}</span>
+      <span class="algo-desc">4 variants &middot; 4bpp &middot; different seeds</span>
+    </div>
+    <div class="grid-wrapper">
+      <div class="grid grid-4col">{cards_html}</div>
+    </div>
+  </div>'''
+
+    total = len(thumbs)
     return f'''<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -626,21 +659,59 @@ def generate_gallery_html(sid, thumbs):
     text-transform: uppercase;
   }}
 
+  /* ── Algorithm section ── */
+  .algo-section {{
+    margin: 0;
+    border-bottom: 1px solid var(--border);
+  }}
+
+  .algo-header {{
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    padding: 18px 40px 12px;
+    background: rgba(57,255,106,0.03);
+    border-bottom: 1px solid var(--border);
+  }}
+
+  .algo-tag {{
+    font-family: var(--font-display);
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--phosphor);
+    letter-spacing: 0.18em;
+    text-shadow: 0 0 10px rgba(57,255,106,0.3);
+  }}
+
+  .algo-desc {{
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 0.06em;
+  }}
+
   /* ── Grid ── */
   .grid {{
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
     gap: 1px;
     background: var(--border);
     margin: 0;
   }}
 
+  .grid-4col {{
+    grid-template-columns: repeat(4, 1fr);
+  }}
+
+  @media (max-width: 900px) {{
+    .grid-4col {{ grid-template-columns: repeat(2, 1fr); }}
+  }}
+
+  @media (max-width: 500px) {{
+    .grid-4col {{ grid-template-columns: 1fr; }}
+  }}
+
   .grid-wrapper {{
-    padding: 1px;
     background: var(--border);
-    margin: 32px 40px;
-    border: 1px solid var(--border);
-    border-radius: 4px;
+    margin: 0;
     overflow: hidden;
   }}
 
@@ -668,6 +739,7 @@ def generate_gallery_html(sid, thumbs):
     overflow: hidden;
     background: #000;
     aspect-ratio: 384/240;
+    cursor: zoom-in;
   }}
 
   .card-img-wrap img {{
@@ -857,7 +929,7 @@ def generate_gallery_html(sid, thumbs):
   @media (max-width: 600px) {{
     header {{ padding: 16px 20px; }}
     .hero-bar {{ padding: 20px; }}
-    .grid-wrapper {{ margin: 20px; }}
+    .algo-header {{ padding: 14px 20px 10px; }}
   }}
 
   /* ── Lightbox ── */
@@ -917,8 +989,6 @@ def generate_gallery_html(sid, thumbs):
     color: var(--text-dim);
     opacity: 0.6;
   }}
-
-  .card-img-wrap {{ cursor: zoom-in; }}
 </style>
 </head>
 <body>
@@ -941,11 +1011,15 @@ def generate_gallery_html(sid, thumbs):
 
   <div class="hero-bar">
     <h2>SELECT YOUR BEST SIMULATION</h2>
-    <p>Each variant was generated with a different random seed. Download the one you prefer.</p>
+    <p>4 algorithms &times; 4 random seeds each. Each row is one dithering method.</p>
     <div class="stat-row">
       <div class="stat">
-        <div class="stat-val">{len(thumbs)}</div>
+        <div class="stat-val">{total}</div>
         <div class="stat-label">Variants</div>
+      </div>
+      <div class="stat">
+        <div class="stat-val">4</div>
+        <div class="stat-label">Algorithms</div>
       </div>
       <div class="stat">
         <div class="stat-val">4</div>
@@ -958,9 +1032,7 @@ def generate_gallery_html(sid, thumbs):
     </div>
   </div>
 
-  <div class="grid-wrapper">
-    <div class="grid">{items}</div>
-  </div>
+{sections_html}
 
   <!-- Processing Overlay (regenerate) -->
   <div class="processing-overlay" id="processingOverlay">
@@ -1004,13 +1076,13 @@ def generate_gallery_html(sid, thumbs):
     const logMessages = [
       '> Flushing previous session data...',
       '> Re-seeding random number generator...',
-      '> Rebuilding dithering matrix...',
-      '> Applying half-bright colour pairs...',
-      '> Running error-diffusion kernel...',
-      '> Encoding MODE1 bitmap stream...',
+      '> Running K-Means clustering in LAB...',
+      '> Running Floyd-Steinberg error diffusion...',
+      '> Running Bayer ordered dither matrix...',
+      '> Running Hue-First palette clustering...',
+      '> Encoding MODE1 bitmap streams...',
       '> Packing shared colour indices...',
       '> Compositing simulation frames...',
-      '> Validating output integrity...',
       '> Preparing gallery render...',
     ];
 
@@ -1685,7 +1757,12 @@ class RequestHandler(BaseHTTPRequestHandler):
                 buf = io.BytesIO()
                 sim.save(buf, format='PNG')
                 b64 = base64.b64encode(buf.getvalue()).decode('utf-8')
-                thumbs.append({'seed': data['seeds'][i], 'data_url': f'data:image/png;base64,{b64}'})
+                thumbs.append({
+                    'seed': data['seeds'][i],
+                    'algo_name': data['algo_names'][i],
+                    'global_index': i,
+                    'data_url': f'data:image/png;base64,{b64}',
+                })
             html = generate_gallery_html(sid, thumbs)
             self.send_response(200)
             self.send_header('Content-Type', 'text/html; charset=utf-8')
@@ -1818,8 +1895,9 @@ class RequestHandler(BaseHTTPRequestHandler):
                 # Remove the large original to free memory
                 del sessions[sid]['original_img']
 
-                seeds, sims, converters = self._generate_samples(resized)
+                seeds, sims, converters, algo_names = self._generate_samples(resized)
                 sessions[sid]['seeds'] = seeds
+                sessions[sid]['algo_names'] = algo_names
                 sessions[sid]['converters'] = converters
                 sessions[sid]['sim_images'] = sims
 
@@ -1847,8 +1925,9 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
 
             try:
-                seeds, sims, converters = self._generate_samples(source_img)
+                seeds, sims, converters, algo_names = self._generate_samples(source_img)
                 data['seeds'] = seeds
+                data['algo_names'] = algo_names
                 data['converters'] = converters
                 data['sim_images'] = sims
             except Exception as e:
@@ -1867,18 +1946,23 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def _generate_samples(self, img):
-        """Returns (seeds, sims, converters) for a single PIL image (must be 384x240)."""
+        """Returns (seeds, sims, converters, algo_names).
+        Generates NUM_SAMPLES simulations for each of the 4 algorithms (4x4 = 16 total).
+        """
         rng = np.random.default_rng()
-        seeds, sims, converters = [], [], []
-        for _ in range(NUM_SAMPLES):
-            seed = int(rng.integers(SEED_MIN, SEED_MAX + 1))
-            seeds.append(seed)
-            conv = Mode1Converter(global_pal, bpp=DEFAULT_BPP, seed=seed)
-            conv.analyse_image(img)  # expects 384x240 image
-            sim = conv.generate_simulation()
-            converters.append(conv)
-            sims.append(sim)
-        return seeds, sims, converters
+        seeds, sims, converters, algo_names = [], [], [], []
+        for algo_name, StrategyClass in ALGORITHMS:
+            for _ in range(NUM_SAMPLES):
+                seed = int(rng.integers(SEED_MIN, SEED_MAX + 1))
+                seeds.append(seed)
+                algo_names.append(algo_name)
+                conv = Mode1Converter(global_pal, bpp=DEFAULT_BPP, seed=seed,
+                                      strategy=StrategyClass())
+                conv.analyse_image(img)
+                sim = conv.generate_simulation()
+                converters.append(conv)
+                sims.append(sim)
+        return seeds, sims, converters, algo_names
 
 
 if __name__ == '__main__':

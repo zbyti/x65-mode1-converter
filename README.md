@@ -1,9 +1,11 @@
-# X65 MODE1 Bitmap Converter
+# X65 MODE1 Bitmap Converter v2
 
 ![Preview](preview.png)
 
 > **A collaborative AI experiment** — built with KIMI, Deepseek and Claude.
 > Converts modern images into the native graphics format of the [**X65 retro computer**](https://x65.zone/).
+>
+> **Now with pluggable dithering algorithms** – choose the one that best preserves your image's character.
 
 ---
 
@@ -21,6 +23,7 @@ It generates the raw bitmap, a JSON file with the optimal 8-color palette for yo
 - [Web Gallery Interface](#web-gallery-interface)
 - [Output Files](#output-files)
 - [Command-Line Options](#command-line-options)
+- [Dithering Algorithms](#dithering-algorithms)
 - [Using the Generated Files on X65](#using-the-generated-files-on-x65)
   - [1. Prepare Memory](#1-prepare-memory)
   - [2. Configure CGIA Plane Registers](#2-configure-cgia-plane-registers)
@@ -50,10 +53,15 @@ It generates the raw bitmap, a JSON file with the optimal 8-color palette for yo
   - **3 bpp** – 8 colors.
   - **4 bpp** – 8 base colors + half-bright (16 distinct shades).
   - **Multicolor** – C64-style multicolor bitmap (2 bpp, fixed color mapping).
+- **Four dithering/conversion algorithms**:
+  - **K-Means** (LAB colour space) – robust global palette selection.
+  - **Floyd-Steinberg** – error diffusion for smooth gradients.
+  - **Bayer ordered dither** – structured matrix dither for a retro look.
+  - **Hue-First** – exploits the 32-row palette layout for vibrant colour preservation.
 - **Optional double-width** – mimics the CGIA's `DOUBLE_WIDTH` flag.
 - **Automatic palette optimization** using k-means clustering and nearest-neighbour mapping into the X65 global 256-color palette.
 - **Reproducible results** with `--seed` – same image + same seed = identical binary output.
-- **Web gallery** for comparing 12 random seeds side-by-side – quickly pick the best color composition.
+- **Web gallery** for comparing simulations across algorithms and seeds – quickly pick the best combination.
 - **Output**:
   - `mode1_bitmap.bin` – packed pixel data ready to be loaded into VRAM.
   - `mode1_shared_colors.json` – 8 palette indices (0–255) for the `shared_color0…7` registers.
@@ -77,7 +85,7 @@ pip install numpy pillow
 
 ## Installation
 
-Just download `mode1_converter.py` and `web_app_claude_ui.py` and place them in any directory.
+Download `mode1_converter_v2.py` and `web_app_claude_ui.py` and place them in any directory.
 You also need a **global palette file** (see [Global Palette Note](#global-palette-note)).
 The converter auto-detects common file names:
 
@@ -91,21 +99,32 @@ If none of them exist, supply your own with `--palette`.
 
 ## Quick Start
 
+All examples use the v2 converter (`mode1_converter_v2.py`).
+
 ```bash
-# 4 bpp (8 colors + half-bright) – usually the best quality/size trade-off
-python mode1_converter.py photo.png --bpp 4
+# 4 bpp (8 colors + half-bright) with default K-Means strategy
+python mode1_converter_v2.py photo.png --bpp 4
+
+# Floyd-Steinberg dithering – great for smooth gradients
+python mode1_converter_v2.py photo.png --bpp 4 --algorithm floyd-steinberg
+
+# Bayer ordered dither – structured, retro look
+python mode1_converter_v2.py photo.png --bpp 4 --algorithm bayer
+
+# Hue-First strategy – preserves vivid colours, good for logos/drawings
+python mode1_converter_v2.py photo.png --bpp 4 --algorithm hue-first
 
 # 2 bpp (4 colors), aggressively small bitmap
-python mode1_converter.py photo.png --bpp 2
+python mode1_converter_v2.py photo.png --bpp 2
 
 # C64-style multicolor
-python mode1_converter.py photo.png --multicolor
+python mode1_converter_v2.py photo.png --multicolor
 
 # 1 bpp with double-width pixels (retro "fat pixel" look)
-python mode1_converter.py photo.png --bpp 1 --double-width
+python mode1_converter_v2.py photo.png --bpp 1 --double-width
 
 # Repeatable palette using a fixed seed
-python mode1_converter.py photo.png --bpp 4 --seed 42
+python mode1_converter_v2.py photo.png --bpp 4 --seed 42 --algorithm floyd-steinberg
 ```
 
 After running you will find three new files: `mode1_bitmap.bin`, `mode1_shared_colors.json`, `mode1_simulation.png`.
@@ -114,7 +133,7 @@ After running you will find three new files: `mode1_bitmap.bin`, `mode1_shared_c
 
 ## Web Gallery Interface
 
-Instead of guessing the best `--seed` manually, you can use the built-in web app to **preview 12 different random seeds at once**.
+Instead of guessing the best algorithm and `--seed` manually, use the built-in web app to **preview 16 simulations** — 4 algorithms × 4 random seeds each.
 
 1. Start the server:
    ```bash
@@ -122,14 +141,18 @@ Instead of guessing the best `--seed` manually, you can use the built-in web app
    ```
    Your browser will open automatically at `http://127.0.0.1:8000`.
 
-2. Drag-and-drop or select an image. The image is immediately processed and you are redirected to a gallery page showing 12 simulations, each with a distinct random seed (range **0–512**).
+2. Drag-and-drop or select an image. You’ll be taken to an interactive cropping tool — always maintain the 8:5 aspect ratio (384×240).
 
-3. Choose the simulation that looks best and click **"Download files"**. A ZIP archive containing `mode1_bitmap_seed{seed}.bin`, `mode1_shared_colors_seed{seed}.json`, and `mode1_simulation_seed{seed}.png` is downloaded.
+3. Once cropped, the app generates all 16 variants and displays them grouped by algorithm: **K-Means**, **Floyd-Steinberg**, **Bayer Dither**, **Hue-First**. Each thumb shows the seed used.
 
-4. To try another batch of seeds for the same image, click the **"New simulations"** button – the original image is reused and 12 new seeds are generated.
+4. Hover over a simulation to see it enlarged; click the image to open a pixel‑perfect lightbox preview.
+
+5. Choose the simulation that looks best and click **"Download"**. A ZIP archive containing `mode1_bitmap_seed{seed}.bin`, `mode1_shared_colors_seed{seed}.json`, and `mode1_simulation_seed{seed}.png` is downloaded.
+
+6. To try another batch of seeds for the same image, click the **"Regenerate"** button — the original is reused and 16 new seeds are generated.
 
 **Configuration** (edit the top of `web_app_claude_ui.py` if needed):
-- `NUM_SAMPLES` – number of gallery entries (default: 12)
+- `NUM_SAMPLES` – number of variants per algorithm (default: 4)
 - `DEFAULT_BPP` – bits per pixel (default: 4, can be 1–4)
 - `SEED_MIN` / `SEED_MAX` – random seed range (default: 0–512)
 
@@ -163,11 +186,47 @@ options:
   --double-width      Stretch every logical pixel to 2 physical pixels
   --seed SEED         Random seed for k-means clustering (int). Same seed → identical palette.
                       If omitted, a different palette is chosen each run.
+  --algorithm {kmeans, floyd-steinberg, bayer, hue-first}
+                      Conversion algorithm (default: kmeans)
   --palette PALETTE   Path to global palette JSON or PNG (32×8). Auto-detected if missing.
   --prefix PREFIX     Output file name prefix (default: mode1)
 ```
 
 > **Note:** `--bpp` is ignored when `--multicolor` is set (multicolor always uses 2 bpp).
+>
+> `--algorithm` is only relevant for bpp ≥2. For 1 bpp a simple threshold is used regardless of this flag.
+
+---
+
+## Dithering Algorithms
+
+The converter supports four strategies, each with its own strengths. Experiment to find what works best for your image.
+
+### K-Means (default)
+- Works in **CIELAB** colour space.
+- Performs k-means clustering on pixel colours, then maps centroids to the global palette.
+- Fast, deterministic with a seed, and produces clean, blocky output.
+- Best for images with large flat areas or when you want minimal noise.
+
+### Floyd-Steinberg
+- Error diffusion dithering in **CIELAB** (or **RGB** for 4 bpp).
+- Propagates quantization error to neighbouring pixels, creating smooth gradients.
+- Excellent for photographs and natural scenes.
+- Can be slower than other methods due to per‑pixel processing.
+
+### Bayer Ordered Dither
+- Uses a 4×4 Bayer matrix to modulate **lightness (L\*)** before colour quantization.
+- Produces a distinctive, ordered texture reminiscent of early computer graphics.
+- For bpp ≤4 (fewer than 8 colours), automatically falls back to un-dithered k‑means to avoid unreadable patterns.
+- Great for a “vintage” feel.
+
+### Hue-First
+- Designed to maximize the unique hue rows of the X65 palette (32 hue families).
+- First assigns each pixel to its nearest global colour, then picks representative rows and brightness levels.
+- Tends to preserve vivid, distinct colours — ideal for logos, illustrations, and images with strong colour contrasts.
+- In 4 bpp mode, it selects exactly one base colour per hue row, then creates half‑bright pairs.
+
+**Seed behaviour**: All four algorithms accept a `--seed`. The seed influences the randomness of initial centroid selection (k‑means) and, for Floyd‑Steinberg/Bayer, the colour palette determination. Different seeds can strongly affect the final palette, so always preview several values.
 
 ---
 
