@@ -237,13 +237,16 @@ class KMeansStrategy(ConversionStrategy):
     def _analyse_multicolor(self, pixels, H, W, global_palette, seed):
         centroids, labels = kmeans_colours(pixels, 4, seed=seed)
         global_inds = self._closest_global_indices(centroids, global_palette)
-        counts = np.bincount(labels)
+        # FIX: enforce minlength=4 so that empty clusters do not shorten
+        # the resulting shared colour list, which would later crash
+        # generate_simulation with an IndexError.
+        counts = np.bincount(labels, minlength=4)
         order = np.argsort(-counts)
         global_inds = global_inds[order]
         remap = np.zeros(4, dtype=np.int32)
         for new_idx, old_idx in enumerate(order):
             remap[old_idx] = new_idx
-        shared = global_inds[0:4].tolist()
+        shared = global_inds.tolist()
         pixel_map = remap[labels].reshape(H, W)
         return shared, pixel_map
 
@@ -544,6 +547,15 @@ class HueFirstStrategy(ConversionStrategy):
 
     def _kmeans_1d(self, values: np.ndarray, k: int, rng):
         N = values.shape[0]
+        # FIX: guard against N < k, which would make rng.choice raise
+        # ValueError because it cannot draw k unique items from N.
+        if N < k:
+            centroids = np.zeros(k, dtype=np.float32)
+            centroids[:N] = values.astype(np.float32)
+            if N > 0:
+                centroids[N:] = values[-1]
+            return centroids, np.zeros(N, dtype=np.int32)
+
         indices = rng.choice(N, size=k, replace=False)
         centroids = values[indices].astype(np.float32).copy()
         labels = np.zeros(N, dtype=np.int32)
